@@ -1,0 +1,21 @@
+# Binaries
+/postbox
+/bin/
+dist/
+
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Build cache
+*.out

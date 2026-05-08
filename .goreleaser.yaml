@@ -1,0 +1,153 @@
+version: 2
+
+project_name: postbox
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: postbox
+    main: .
+    binary: postbox
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
+upx:
+  - enabled: true
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    compress: best
+    lzma: true
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - postbox.example.yaml
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.bundle"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: all
+
+dockers:
+  - id: postbox-amd64
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-amd64"
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/rbaliyan/postbox"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+  - id: postbox-arm64
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-arm64"
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/rbaliyan/postbox"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/rbaliyan/postbox:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-amd64"
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/rbaliyan/postbox:latest"
+    image_templates:
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-amd64"
+      - "ghcr.io/rbaliyan/postbox:{{ .Version }}-arm64"
+    skip_push: "auto"
+
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - "${artifact}"
+      - "--yes"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+nfpms:
+  - id: packages
+    package_name: postbox
+    vendor: Rajeev Baliyan
+    homepage: https://github.com/rbaliyan/postbox
+    maintainer: Rajeev Baliyan
+    description: SMTP relay server with plugin-based filtering, DKIM signing, and gRPC API
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+
+release:
+  github:
+    owner: rbaliyan
+    name: postbox
+  draft: false
+  prerelease: auto
+  name_template: "{{.Tag}}"

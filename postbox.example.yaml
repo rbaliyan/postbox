@@ -1,0 +1,218 @@
+## postbox.example.yaml — reference configuration
+## Start with: postbox serve --config postbox.example.yaml
+## Every flag shown here can also be set via env var POSTBOX_<SECTION>_<FIELD>
+## (e.g. POSTBOX_SERVER_PORT=50051) or as a CLI flag (e.g. --port 50051).
+## Precedence (highest → lowest): CLI flag → env var → config file → built-in default.
+
+server:
+  port: "50051"           # gRPC listen port
+  host: localhost         # publicly reachable hostname returned by Discover
+  mode: standalone        # standalone | temp (temp = in-memory, no disk I/O)
+  db: postbox.db          # SQLite path for the node store (users, domains, jobs)
+  node_id: ""             # stable node identity; auto-generated UUID when empty
+
+grpc:
+  auth_token: ""          # bearer token required on every gRPC call;
+                          # leave empty only for development/localhost deployments
+
+# ---------------------------------------------------------------------------
+# Mailbox message store
+# Default is "memory" — messages are lost on restart. Use postgres or mongo
+# for production deployments that require durability.
+# ---------------------------------------------------------------------------
+mailbox_store:
+  backend: memory         # memory | postgres | mongo
+  dsn: ""                 # postgres: "postgres://user:pass@host:5432/db?sslmode=disable"
+                          # mongo:    "mongodb://localhost:27017"
+  database: ""            # mongo only: database name (default "mailbox")
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  metrics_port: 9090      # HTTP port for /metrics (Prometheus scrape); 0 = disabled
+  health_enabled: true    # register gRPC health service on the main listener
+
+# ---------------------------------------------------------------------------
+# Multi-node clustering
+# When redis_url is set, node registrations are stored in Redis and all nodes
+# in the cluster can discover each other. Remove or leave empty for single-node.
+# ---------------------------------------------------------------------------
+cluster:
+  redis_url: ""           # e.g. redis://localhost:6379 or rediss://user:pass@host:6380
+
+# ---------------------------------------------------------------------------
+# SMTP gateway — inbound email from external clients
+# ---------------------------------------------------------------------------
+smtp:
+  enabled: false
+  port: 2525
+  bind_addr: ""           # "" = all interfaces; "127.0.0.1" = loopback only
+  domain: localhost        # SMTP banner domain (EHLO response)
+  insecure_auth: false    # allow AUTH over plain-text; enable only on private nets
+  max_msg_bytes: 0        # 0 = 10 MiB
+  max_recipients: 0       # 0 = 50 per message
+  max_connections: 0      # 0 = 1000 concurrent
+  read_timeout_secs: 0    # 0 = 60 s
+  write_timeout_secs: 0   # 0 = 60 s
+  rate_conns: 0.0         # max new connections/sec globally (0 = unlimited)
+  rate_burst: 0           # global burst capacity (0 = 10)
+  rate_conns_per_ip: 0.0  # max new connections/sec per source IP (0 = unlimited)
+  rate_burst_per_ip: 0    # per-IP burst capacity (0 = 5)
+  relay_enabled: false    # accept RCPT TO for any address (open relay — trusted nets only)
+
+  # TLS — both cert and key must be set to enable STARTTLS
+  tls_cert_file: ""
+  tls_key_file: ""
+
+  # Security
+  max_auth_failures_per_session: 5   # disconnect after N failed AUTH attempts
+  check_spf: false                    # verify SPF during MAIL FROM
+  verify_dkim: false                  # verify DKIM signatures on inbound messages
+
+# ---------------------------------------------------------------------------
+# LMTP gateway — local delivery from an upstream MTA (e.g. Postfix)
+# Prefer lmtp_socket_path for co-located deployments.
+# ---------------------------------------------------------------------------
+lmtp:
+  enabled: false
+  socket_path: ""         # Unix socket path (recommended); e.g. /run/postbox/lmtp.sock
+  port: 2424              # TCP port — used only when socket_path is empty
+  bind_addr: "127.0.0.1" # TCP bind address (ignored when socket_path is set)
+  domain: localhost
+  max_msg_bytes: 0        # 0 = 10 MiB
+  max_recipients: 0       # 0 = 100 per message
+  read_timeout_secs: 0    # 0 = 5 minutes
+  write_timeout_secs: 0   # 0 = 60 s
+
+# ---------------------------------------------------------------------------
+# Webhook dispatcher — push delivery to agent endpoints
+# ---------------------------------------------------------------------------
+webhook:
+  enabled: false
+  workers: 4              # concurrent delivery goroutines
+  max_attempts: 5         # attempts before a job is marked permanently failed
+  timeout_secs: 10        # HTTP POST timeout per attempt
+
+# ---------------------------------------------------------------------------
+# Outbound relay — deliver messages to external recipients via email providers
+# Recipients not registered locally are routed to the relay backend.
+# ---------------------------------------------------------------------------
+outbound:
+  backend: ""             # smtp | sendgrid (empty = disabled)
+  node_id: outbound       # virtual routing node ID used internally
+  from: ""                # default envelope sender / From address
+
+  # SMTP backend — covers AWS SES, Mailgun, Postfix, any SMTP relay
+  # AWS SES: smtp_host: "email-smtp.us-east-1.amazonaws.com:587"
+  smtp_host: ""
+  smtp_username: ""
+  smtp_password: ""
+  smtp_timeout_secs: 30
+
+  # SendGrid backend — HTTP v3 API
+  sendgrid_api_key: ""    # starts with "SG."
+  sendgrid_timeout_secs: 10
+
+  # DKIM signing — all three fields must be set to enable signing.
+  # Only supported with the SMTP backend (SendGrid signs server-side).
+  dkim_private_key_file: ""   # path to PEM-encoded RSA or Ed25519 private key
+  dkim_domain: ""             # signing domain, e.g. "example.com"
+  dkim_selector: ""           # DNS selector, e.g. "postbox"
+                              # public key expected at: <selector>._domainkey.<domain>
+
+  # Async delivery queue — buffers messages and retries with exponential backoff.
+  queue_enabled: false
+  queue_workers: 4
+  queue_max_retries: 7
+  queue_base_delay_secs: 5    # initial backoff: 5s, 10s, 20s, 40s, …
+  queue_max_delay_secs: 14400 # cap at 4 hours
+
+# ---------------------------------------------------------------------------
+# Plugins — evaluated in the order shown; each is independently opt-in.
+# All plugins share the same evaluation chain: BeforeSend (in order) then
+# AfterSend (in order). The first rejection aborts delivery.
+# ---------------------------------------------------------------------------
+plugins:
+
+  # CrowdSec — IP reputation via the LAPI bouncer API
+  crowdsec:
+    enabled: false
+    endpoint: http://localhost:8080  # CrowdSec LAPI base URL
+    api_key: ""                       # bouncer API key
+    timeout_secs: 2
+    fail_open: true                   # allow when LAPI is unreachable
+    cache_ttl_secs: 30                # cache decisions for this many seconds
+
+  # DNSBL / RBL — blocks connecting IPs listed in DNS block-lists.
+  # Reads the X-SMTP-Remote-Addr internal header; no-op for non-SMTP paths.
+  dnsbl:
+    enabled: false
+    zones:                            # one or more DNS block-list zones
+      - zen.spamhaus.org
+      - bl.spamcop.net
+    cache_ttl_secs: 300               # cache per-IP decisions (default 5 min)
+    fail_open: true                   # allow when DNS lookup fails
+
+  # Address filter — allow/block based on sender/recipient address patterns.
+  # Rules are YAML-only (no CLI flag); field: sender | recipients | all.
+  address_filter:
+    enabled: false
+    mode: block                       # block | allow
+    rules:
+      - id: block-test-domain
+        pattern: "@test.internal"
+        field: sender
+
+  # Attachment filter — enforce attachment count and size limits.
+  attachment:
+    enabled: false
+    max_count: 0                      # 0 = unlimited
+    max_single_bytes: 0               # 0 = unlimited per attachment
+    max_total_bytes: 0                # 0 = unlimited total
+    allowed_mimes: []                 # empty = all MIME types allowed
+    blocked_mimes: []                 # additive blocklist
+
+  # SMTP security — IP lockout, sender domain controls, envelope spoof detection.
+  smtp_security:
+    enabled: false
+    max_auth_failures_per_ip: 5       # 0 = unlimited
+    lockout_minutes: 15               # lockout duration after threshold
+    envelope_spoof_check: false       # reject when MAIL FROM != From header
+    require_authenticated_sender: false
+    allowed_sender_domains: []        # empty = all domains allowed
+    blocked_sender_domains: []
+    redis_lockout: false              # use Redis-backed store (requires cluster.redis_url)
+
+  # Email authentication — enforce SPF, DKIM, and DMARC policies.
+  # Reads X-SPF-Result, X-DKIM-Result, X-DKIM-Domain headers injected by the
+  # SMTP server (requires smtp.check_spf / smtp.verify_dkim).
+  # Policy values: off | warn | reject | require (require not valid for dmarc)
+  email_auth:
+    enabled: false
+    spf_policy: off
+    dkim_policy: off
+    dmarc_policy: off                 # off | warn | reject
+
+  # Spam checker — delegate spam scoring to an HTTP endpoint.
+  spam_checker:
+    enabled: false
+    endpoint: ""                      # e.g. http://rspamd:11333/checkv2
+    threshold: 5.0                    # reject above this score
+    tag_only: false                   # add X-Spam-Score header instead of rejecting
+    timeout_secs: 5
+
+  # Antivirus — delegate AV scanning to an HTTP endpoint.
+  antivirus:
+    enabled: false
+    endpoint: ""                      # e.g. http://clamav:3310/scan
+    fail_open: false                  # reject when AV is unreachable
+    timeout_secs: 30
+
+  # Security agent — per-sender rate limiting and message size limits.
+  security_agent:
+    enabled: false
+    max_recipients: 0                 # 0 = unlimited
+    max_body_bytes: 0                 # 0 = unlimited
+    rate_per_sender: 0.0             # msgs/sec per sender (0 = unlimited)
+    burst_per_sender: 1

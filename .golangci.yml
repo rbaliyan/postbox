@@ -1,0 +1,12 @@
+version: "2"
+run:
+  tests: false
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck

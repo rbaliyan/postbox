@@ -1,0 +1,218 @@
+syntax = "proto3";
+
+package postbox.v1;
+
+option go_package = "github.com/rbaliyan/postbox/proto/postbox/v1;postboxpb";
+
+import "google/protobuf/empty.proto";
+
+// PostboxService is the agent communication backbone for AI agent swarms.
+service PostboxService {
+  // Discover returns the node responsible for a target domain or user email.
+  rpc Discover (DiscoverRequest) returns (NodeInfo);
+
+  // RegisterDomain claims a domain for the local node.
+  // Returns ALREADY_EXISTS if the domain is already claimed by a different node.
+  rpc RegisterDomain (RegisterDomainRequest) returns (Response);
+
+  // RegisterUser registers a mailbox principal — human, AI agent, or service.
+  // Set type="agent" for AI agents; use metadata for skills, endpoint, region, etc.
+  // Idempotent: returns ok=true if the user already exists.
+  rpc RegisterUser (RegisterUserRequest) returns (Response);
+
+  // GetUser retrieves a user profile by email address.
+  // Returns NOT_FOUND if the user is not registered.
+  rpc GetUser (GetUserRequest) returns (UserProfile);
+
+  // SearchUsers returns users whose metadata matches all supplied filters.
+  // Filter values are substring-matched, so filtering skills="web-search"
+  // matches metadata["skills"]="web-search,image-gen".
+  rpc SearchUsers (SearchUsersRequest) returns (SearchUsersResponse);
+
+  // ListUsers returns all registered users.
+  rpc ListUsers (google.protobuf.Empty) returns (ListUsersResponse);
+
+  // GetNodePublicKey returns the node's Ed25519 public key.
+  // Agents call this once during onboarding and cache the result.
+  // Use the returned key to verify X-Postbox-Signature-Ed25519 headers on
+  // incoming webhook POSTs.
+  rpc GetNodePublicKey (google.protobuf.Empty) returns (NodePublicKeyResponse);
+
+  // GetStatus returns health and capacity metrics for the local node.
+  rpc GetStatus (google.protobuf.Empty) returns (StatusReport);
+
+  // RemapDomain reassigns a domain to a different node (admin operation).
+  rpc RemapDomain (RemapDomainRequest) returns (Response);
+
+  // ListDomains returns all registered domains.
+  rpc ListDomains (google.protobuf.Empty) returns (ListDomainsResponse);
+
+  // StartSMTP starts the SMTP listener with the given config.
+  // Returns FAILED_PRECONDITION if the listener is already running.
+  rpc StartSMTP (SMTPConfig) returns (Response);
+
+  // StopSMTP stops the running SMTP listener.
+  // Returns FAILED_PRECONDITION if the listener is not currently running.
+  rpc StopSMTP (google.protobuf.Empty) returns (Response);
+
+  // GetSMTPStatus returns the current SMTP listener state.
+  rpc GetSMTPStatus (google.protobuf.Empty) returns (SMTPStatus);
+
+  // GetDeliveryStatus returns webhook delivery attempts for a message/recipient pair.
+  // Returns NOT_FOUND if no delivery job exists.
+  rpc GetDeliveryStatus (GetDeliveryStatusRequest) returns (DeliveryStatusResponse);
+
+  // ListDeliveryFailures returns failed and dead delivery jobs.
+  // Filter by recipient_id to narrow results to a specific user.
+  rpc ListDeliveryFailures (ListDeliveryFailuresRequest) returns (ListDeliveryFailuresResponse);
+}
+
+// ---- Routing ----
+
+message DiscoverRequest {
+  string target = 1;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  string address = 2;
+  string mode    = 3;
+}
+
+// ---- Domain ----
+
+message RegisterDomainRequest {
+  string name       = 1;
+  bool   is_default = 2;
+}
+
+message RemapDomainRequest {
+  string domain         = 1;
+  string target_node_id = 2;
+}
+
+message DomainInfo {
+  string name       = 1;
+  string node_id    = 2;
+  bool   is_default = 3;
+}
+
+message ListDomainsResponse {
+  repeated DomainInfo domains = 1;
+}
+
+// ---- User ----
+
+message RegisterUserRequest {
+  string             email      = 1;
+  // public_key is the user's Ed25519 public key (base64-encoded).
+  // Required for AI agents; empty for human users.
+  string             public_key = 2;
+  map<string,string> metadata   = 3;
+  // type classifies the principal: "human", "agent", "service", or "" (unset).
+  string             type       = 4;
+}
+
+message GetUserRequest {
+  string email = 1;
+}
+
+// UserProfile is the full registration record for any mailbox principal.
+message UserProfile {
+  string             email      = 1;
+  // public_key is the user's Ed25519 public key (base64-encoded); empty for humans.
+  string             public_key = 2;
+  map<string,string> metadata   = 3;
+  string             node_id    = 4;
+  // type classifies the principal: "human", "agent", "service", or "" (unset).
+  string             type       = 5;
+}
+
+message SearchUsersRequest {
+  // metadata_filters is a set of key-value pairs. Returned users must satisfy
+  // all filters. Values are substring-matched (e.g. skills="web-search" matches
+  // metadata["skills"]="web-search,image-gen").
+  map<string,string> metadata_filters = 1;
+}
+
+message SearchUsersResponse {
+  repeated UserProfile users = 1;
+}
+
+message ListUsersResponse {
+  repeated UserProfile users = 1;
+}
+
+// ---- Node key ----
+
+message NodePublicKeyResponse {
+  // public_key is the node's Ed25519 public key, base64-encoded (standard encoding).
+  string public_key = 1;
+  string node_id    = 2;
+  // key_id is an opaque rotation token. Agents should re-fetch the key when
+  // they encounter a key_id they have not seen before.
+  string key_id     = 3;
+}
+
+// ---- Common ----
+
+message Response {
+  bool   ok      = 1;
+  string message = 2;
+}
+
+message StatusReport {
+  string node_id           = 1;
+  string mode              = 2;
+  int64  domain_count      = 3;
+  int64  user_count        = 4;
+  bool   mailbox_connected = 5;
+}
+
+// ---- SMTP ----
+
+message SMTPConfig {
+  int32  port               = 1;
+  string domain             = 2;
+  bool   allow_insecure_auth = 3;
+  int64  max_message_bytes  = 4;
+  int32  max_recipients     = 5;
+  int32  read_timeout_secs  = 6;
+  int32  write_timeout_secs = 7;
+  double max_conns_per_sec  = 8;
+  int32  burst_conns        = 9;
+}
+
+message SMTPStatus {
+  bool   running = 1;
+  int32  port    = 2;
+  string domain  = 3;
+}
+
+// ---- Webhook delivery ----
+
+message GetDeliveryStatusRequest {
+  string message_id   = 1;
+  string recipient_id = 2;
+}
+
+message DeliveryStatusResponse {
+  string message_id    = 1;
+  string recipient_id  = 2;
+  string endpoint_url  = 3;
+  string status        = 4; // "pending" | "delivered" | "failed" | "dead"
+  int32  attempts      = 5;
+  int32  max_attempts  = 6;
+  string last_error    = 7;
+  string next_retry_at = 8; // RFC3339; empty when no retry is scheduled
+  string delivered_at  = 9; // RFC3339; empty when not yet delivered
+}
+
+message ListDeliveryFailuresRequest {
+  // Filter by user email; empty returns failures for all users.
+  string recipient_id = 1;
+}
+
+message ListDeliveryFailuresResponse {
+  repeated DeliveryStatusResponse jobs = 1;
+}

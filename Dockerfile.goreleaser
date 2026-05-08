@@ -1,0 +1,8 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY postbox /usr/local/bin/postbox
+
+EXPOSE 25 587 465 8080 9090
+
+ENTRYPOINT ["/usr/local/bin/postbox"]
+CMD ["serve"]
